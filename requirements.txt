@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy
+alembic
+psycopg2-binary
+python-multipart
+mne
+numpy
+pydantic>=2.0.0
