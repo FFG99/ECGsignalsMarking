@@ -71,3 +71,14 @@ async def get_eeg_data(record_id: int, db: Session = Depends(get_db)):
 async def list_records(db: Session = Depends(get_db)):
     records = db.query(models.EEGRecord).all()
     return records
+
+
+@app.delete("/records/{record_id}")
+async def delete_record(record_id: int, db: Session = Depends(get_db)):
+    record = db.query(models.EEGRecord).filter(models.EEGRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    
+    db.delete(record)
+    db.commit()
+    return {"message": f"Record {record_id} deleted successfully"}

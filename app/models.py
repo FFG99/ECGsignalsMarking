@@ -6,7 +6,7 @@ Base = declarative_base()
 
 
 class EEGRecord(Base):
-    __tablename__ = "eeg_records"
+    __tablename__ = "ekg_records"
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String, nullable=False)
