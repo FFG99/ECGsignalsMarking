@@ -55,8 +55,12 @@ uvicorn app.main:app --reload
 
 ### GET /records/ {record_id}/data
 
-Получение данных EEG из базы данных по ID записи.
+Получение данных ЭКГ из базы данных по ID записи.
 
 ### GET /records/
 
 Получение данных о всех ЭКГ в базы данных.
+
+### DELETE /records/ {record_id}
+
+Удаление данных ЭКГ из базы данных по ID записи.

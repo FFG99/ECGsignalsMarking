@@ -2,15 +2,15 @@ from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 
-class EEGRecordBase(BaseModel):
+class ECGRecordBase(BaseModel):
     filename: str
 
 
-class EEGRecordCreate(EEGRecordBase):
+class ECGRecordCreate(ECGRecordBase):
     pass
 
 
-class EEGRecord(EEGRecordBase):
+class ECGRecord(ECGRecordBase):
     id: int
     created_at: datetime
     updated_at: datetime

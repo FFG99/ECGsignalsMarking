@@ -5,7 +5,7 @@ from datetime import datetime
 Base = declarative_base()
 
 
-class EEGRecord(Base):
+class ECGRecord(Base):
     __tablename__ = "ekg_records"
 
     id = Column(Integer, primary_key=True, index=True)
