@@ -1,0 +1,35 @@
+{
+    "feature_names": [
+        "Mean_HR",
+        "Mean_RR",
+        "SDNN",
+        "RMSSD",
+        "pNN50",
+        "LF_power",
+        "HF_power",
+        "LF_HF_ratio"
+    ],
+    "metrics": {
+        "accuracy": 0.8136645962732919,
+        "0_precision": 0.8144329896907216,
+        "0_recall": 0.8494623655913979,
+        "0_f1-score": 0.8315789473684211,
+        "0_support": 93.0,
+        "1_precision": 0.7771739130434783,
+        "1_recall": 0.8881987577639752,
+        "1_f1-score": 0.8289855072463768,
+        "1_support": 161.0,
+        "2_precision": 0.975609756097561,
+        "2_recall": 0.5882352941176471,
+        "2_f1-score": 0.7339449541284404,
+        "2_support": 68.0,
+        "macro avg_precision": 0.8557388862772536,
+        "macro avg_recall": 0.7752988058243401,
+        "macro avg_f1-score": 0.7981698029144128,
+        "macro avg_support": 322.0,
+        "weighted avg_precision": 0.8298407809188548,
+        "weighted avg_recall": 0.8136645962732919,
+        "weighted avg_f1-score": 0.8096638684865334,
+        "weighted avg_support": 322.0
+    }
+}
