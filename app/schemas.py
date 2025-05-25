@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+from typing import List
 
 
 class ECGRecordBase(BaseModel):
@@ -16,3 +17,14 @@ class ECGRecord(ECGRecordBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PredictionSegment(BaseModel):
+    start_time: float
+    end_time: float
+    state: str
+
+
+class PredictionResponse(BaseModel):
+    record_id: int
+    predictions: List[PredictionSegment]

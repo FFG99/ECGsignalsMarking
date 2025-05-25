@@ -1,0 +1,121 @@
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from catboost import CatBoostClassifier
+import json
+from typing import Dict, List, Tuple
+from pathlib import Path
+import pickle
+
+class ModelManager:
+    def __init__(self):
+        self.model_dir = Path("model")
+        self.model_dir.mkdir(exist_ok=True)
+        
+        self.scaler = StandardScaler()
+        self.label_encoder = LabelEncoder()
+        
+    def prepare_data(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        y = y.ravel()
+        y_encoded = self.label_encoder.fit_transform(y)
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+        )
+        
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        
+        return X_train_scaled, X_test_scaled, y_train, y_test
+    
+    def train_model(self, X: np.ndarray, y: np.ndarray, feature_names: List[str]) -> Tuple[CatBoostClassifier, Dict[str, float]]:
+        X_train_scaled, X_test_scaled, y_train, y_test = self.prepare_data(X, y)
+        
+        model_params = {
+            'iterations': 1000,
+            'learning_rate': 0.1,
+            'depth': 4,
+            'l2_leaf_reg': 3,
+            'bootstrap_type': 'Bernoulli',
+            'subsample': 0.8,
+            'random_seed': 42,
+            'verbose': 100,
+            'early_stopping_rounds': 50,
+            'eval_metric': 'MultiClass',
+            'loss_function': 'MultiClass',
+            'classes_count': len(np.unique(y))
+        }
+        
+        model = CatBoostClassifier(**model_params)
+        eval_set = [(X_test_scaled, y_test)]
+        
+        model.fit(
+            X_train_scaled, y_train,
+            eval_set=eval_set,
+            use_best_model=True
+        )
+        
+        y_pred = model.predict(X_test_scaled)
+        metrics = self._calculate_metrics(y_test, y_pred)
+        
+        self.save_model(model, feature_names, metrics)
+        
+        return model, metrics
+    
+    def _calculate_metrics(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+        metrics = {
+            'accuracy': accuracy_score(y_true, y_pred)
+        }
+        
+        report = classification_report(y_true, y_pred, output_dict=True)
+        for label in report:
+            if isinstance(report[label], dict):
+                for metric, value in report[label].items():
+                    metrics[f'{label}_{metric}'] = value
+        
+        return metrics
+    
+    def save_model(self, model: CatBoostClassifier, feature_names: List[str], metrics: Dict[str, float]):
+        model.save_model(str(self.model_dir / 'model.cbm'))
+        
+        with open(self.model_dir / 'scaler.pkl', 'wb') as f:
+            pickle.dump(self.scaler, f)
+        
+        with open(self.model_dir / 'label_encoder.pkl', 'wb') as f:
+            pickle.dump(self.label_encoder, f)
+        
+        metadata = {
+            'feature_names': feature_names,
+            'metrics': metrics
+        }
+        with open(self.model_dir / 'metadata.json', 'w') as f:
+            json.dump(metadata, f, indent=4)
+    
+    @staticmethod
+    def load_model() -> Tuple[CatBoostClassifier, StandardScaler, LabelEncoder, Dict]:
+        model_dir = Path("model")
+        
+        if not model_dir.exists():
+            raise FileNotFoundError("Модель не найдена. Сначала обучите модель.")
+        
+        model = CatBoostClassifier()
+        model.load_model(str(model_dir / 'model.cbm'))
+        
+        with open(model_dir / 'scaler.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+        
+        with open(model_dir / 'label_encoder.pkl', 'rb') as f:
+            label_encoder = pickle.load(f)
+        
+        with open(model_dir / 'metadata.json', 'r') as f:
+            metadata = json.load(f)
+        
+        return model, scaler, label_encoder, metadata
+    
+    @staticmethod
+    def predict(model: CatBoostClassifier, scaler: StandardScaler, 
+               label_encoder: LabelEncoder, X: np.ndarray) -> np.ndarray:
+        X_scaled = scaler.transform(X)
+        predictions = model.predict(X_scaled)
+        return label_encoder.inverse_transform(predictions)

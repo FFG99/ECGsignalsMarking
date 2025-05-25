@@ -6,4 +6,13 @@ psycopg2-binary
 python-multipart
 mne
 numpy
-pydantic>=2.0.0
+pydantic
+pandas
+scikit-learn
+catboost
+neurokit2
+scipy
+joblib
+PyWavelets
+seaborn
+matplotlib

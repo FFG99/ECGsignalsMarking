@@ -5,48 +5,74 @@ import tempfile
 import os
 import pickle
 from typing import List
+import numpy as np
+from pathlib import Path
 
 from . import models, schemas
 from .database import engine, get_db
+from model_manager import ModelManager
+from features.eeg_processor import EEGProcessor
+import neurokit2 as nk
+import warnings
+
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn.utils.extmath")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="neurokit2.signal.signal_psd")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="neurokit2.hrv.hrv_time")
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
+model, scaler, label_encoder, model_info = ModelManager.load_model() # Загрузка модели при старте
 
-@app.post("/upload/", response_model=schemas.ECGRecord)
-async def upload_ecg_file(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    if not file.filename.endswith('.edf'):
-        raise HTTPException(status_code=400,
-                            detail="Only .edf files are allowed")
+
+def extract_features(signal: np.ndarray, sampling_rate: int = 1000) -> np.ndarray:
+    processor = EEGProcessor(sampling_rate=sampling_rate)
+    
+    segments = processor.segment_signal(signal, overlap=0.9)
+    
+    features_list = []
+    for segment in segments:
+        r_peaks = nk.ecg_findpeaks(segment, sampling_rate=sampling_rate)
+        rr_intervals = np.diff(r_peaks['ECG_R_Peaks']) / sampling_rate
+        
+        if len(rr_intervals) > 0:
+            features = processor.calculate_features(segment, rr_intervals)
+            feature_array = np.array([features[feature] for feature in [
+                'Mean_HR', 'Mean_RR', 'SDNN', 'RMSSD', 'pNN50',
+                'LF_power', 'HF_power', 'LF_HF_ratio'
+            ]])
+            features_list.append(feature_array)
+    
+    return np.array(features_list)
+
+
+@app.post("/records/upload", response_model=schemas.ECGRecord)
+async def upload_record(file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
-        contents = await file.read()
+        temp_file = f"temp_{file.filename}"
+        with open(temp_file, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        raw = mne.io.read_raw_edf(temp_file, preload=True)
+        data = raw.get_data()
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.edf') as tmp:
-            tmp.write(contents)
-            tmp_path = tmp.name
-        try:
-            raw = mne.io.read_raw_edf(tmp_path, preload=True)
-            data = raw.get_data()
-        finally:
-            os.remove(tmp_path)
-
-        serialized_data = pickle.dumps(data)
-
-        db_record = models.ECGRecord(
+        record = models.ECGRecord(
             filename=file.filename,
-            data=serialized_data
+            data=pickle.dumps(data)
         )
-        db.add(db_record)
+        db.add(record)
         db.commit()
-        db.refresh(db_record)
+        db.refresh(record)
+        
+        os.remove(temp_file)
 
-        return db_record
+        return record
 
     except Exception as e:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -82,3 +108,46 @@ async def delete_record(record_id: int, db: Session = Depends(get_db)):
     db.delete(record)
     db.commit()
     return {"message": f"Record {record_id} deleted successfully"}
+
+
+@app.post("/records/{record_id}/predict", response_model=schemas.PredictionResponse)
+async def predict_record(record_id: int, db: Session = Depends(get_db)):
+    record = db.query(models.ECGRecord).filter(models.ECGRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    
+    try:
+        data = pickle.loads(record.data)
+        
+        all_features = []
+        for channel_data in data:
+            features = extract_features(channel_data)
+            if len(features) > 0:
+                all_features.append(features)
+        
+        if len(all_features) > 0:
+            combined_features = np.concatenate(all_features, axis=0)
+            
+            predictions = ModelManager.predict(model, scaler, label_encoder, combined_features)
+            
+            segment_duration = 10.0
+            prediction_segments = []
+            
+            for i, state in enumerate(predictions):
+                start_time = i * segment_duration
+                end_time = (i + 1) * segment_duration
+                prediction_segments.append(schemas.PredictionSegment(
+                    start_time=start_time,
+                    end_time=end_time,
+                    state=state
+                ))
+            
+            return schemas.PredictionResponse(
+                record_id=record_id,
+                predictions=prediction_segments
+            )
+        else:
+            raise HTTPException(status_code=500, detail="No features could be extracted from the signal")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
