@@ -4,10 +4,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from catboost import CatBoostClassifier
 import json
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 from pathlib import Path
 import pickle
 import optuna
+import neurokit2 as nk
+from features.eeg_processor import EEGProcessor
 
 class ModelManager:
     def __init__(self):
@@ -147,3 +149,48 @@ class ModelManager:
         X_scaled = scaler.transform(X)
         predictions = model.predict(X_scaled)
         return label_encoder.inverse_transform(predictions)
+
+    @staticmethod
+    def predict_record(model: CatBoostClassifier, scaler: StandardScaler, 
+                      label_encoder: LabelEncoder, record: np.ndarray, 
+                      sampling_rate: int = 1000, window_size: int = 10) -> List[Dict[str, Any]]:
+        processor = EEGProcessor(sampling_rate=sampling_rate)
+        segments = processor.segment_signal(record, segment_length=window_size, overlap=0.9)
+        
+        predictions = []
+        for i, segment in enumerate(segments):
+            r_peaks = nk.ecg_findpeaks(segment, sampling_rate=sampling_rate)
+            rr_intervals = np.diff(r_peaks['ECG_R_Peaks']) / sampling_rate
+            
+            if len(rr_intervals) > 0:
+                features = processor.calculate_features(segment, rr_intervals)
+                feature_array = np.array([features[feature] for feature in [
+                    'Mean_HR', 'Mean_RR', 'SDNN', 'RMSSD', 'pNN50',
+                    'LF_power', 'HF_power', 'LF_HF_ratio'
+                ]])
+                
+                prediction = ModelManager.predict(model, scaler, label_encoder, feature_array.reshape(1, -1))[0]
+                start_time = i * window_size * (1 - 0.9)  # Учитываем overlap
+                end_time = start_time + window_size
+                predictions.append({
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'prediction': prediction
+                })
+        
+        # Объединяем соседние интервалы с одинаковыми предсказаниями
+        merged_predictions = []
+        if predictions:
+            current_pred = predictions[0]
+            
+            for next_pred in predictions[1:]:
+                if (next_pred['prediction'] == current_pred['prediction'] and 
+                    next_pred['start_time'] - current_pred['end_time'] < window_size * 0.1):  # Учитываем небольшой зазор
+                    current_pred['end_time'] = next_pred['end_time']
+                else:
+                    merged_predictions.append(current_pred)
+                    current_pred = next_pred
+            
+            merged_predictions.append(current_pred)
+        
+        return merged_predictions

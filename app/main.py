@@ -7,6 +7,7 @@ import pickle
 from typing import List
 import numpy as np
 from pathlib import Path
+import logging
 
 from . import models, schemas
 from .database import engine, get_db
@@ -25,6 +26,9 @@ app = FastAPI()
 
 model, scaler, label_encoder, model_info = ModelManager.load_model() # Загрузка модели при старте
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def extract_features(signal: np.ndarray, sampling_rate: int = 1000) -> np.ndarray:
     processor = EEGProcessor(sampling_rate=sampling_rate)
@@ -118,36 +122,45 @@ async def predict_record(record_id: int, db: Session = Depends(get_db)):
     
     try:
         data = pickle.loads(record.data)
+        logger.info(f"Loaded data shape: {data.shape}")
         
-        all_features = []
-        for channel_data in data:
-            features = extract_features(channel_data)
-            if len(features) > 0:
-                all_features.append(features)
+        # Находим канал ЭКГ
+        ecg_channel = None
+        for i, channel_data in enumerate(data):
+            if len(channel_data) > 0:
+                ecg_channel = channel_data
+                logger.info(f"Found ECG channel at index {i} with length {len(channel_data)}")
+                break
         
-        if len(all_features) > 0:
-            combined_features = np.concatenate(all_features, axis=0)
-            
-            predictions = ModelManager.predict(model, scaler, label_encoder, combined_features)
-            
-            segment_duration = 10.0
-            prediction_segments = []
-            
-            for i, state in enumerate(predictions):
-                start_time = i * segment_duration
-                end_time = (i + 1) * segment_duration
-                prediction_segments.append(schemas.PredictionSegment(
-                    start_time=start_time,
-                    end_time=end_time,
-                    state=state
-                ))
-            
-            return schemas.PredictionResponse(
-                record_id=record_id,
-                predictions=prediction_segments
+        if ecg_channel is None:
+            logger.error("No valid ECG channel found in the data")
+            raise HTTPException(status_code=500, detail="No valid ECG channel found")
+        
+        # Получаем предсказания с объединением интервалов
+        try:
+            prediction_segments = ModelManager.predict_record(
+                model, scaler, label_encoder, ecg_channel
             )
-        else:
-            raise HTTPException(status_code=500, detail="No features could be extracted from the signal")
+            logger.info(f"Generated {len(prediction_segments)} prediction segments")
+        except Exception as e:
+            logger.error(f"Error in predict_record: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error in prediction: {str(e)}")
+        
+        # Преобразуем в формат ответа
+        segments = [
+            schemas.PredictionSegment(
+                start_time=segment['start_time'],
+                end_time=segment['end_time'],
+                state=segment['prediction']
+            )
+            for segment in prediction_segments
+        ]
+        
+        return schemas.PredictionResponse(
+            record_id=record_id,
+            predictions=segments
+        )
         
     except Exception as e:
+        logger.error(f"Unexpected error in predict_record: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
