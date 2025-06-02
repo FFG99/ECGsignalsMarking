@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from catboost import CatBoostClassifier
@@ -10,6 +10,8 @@ import pickle
 import optuna
 import neurokit2 as nk
 import logging
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from features.eeg_processor import EEGProcessor
 
@@ -156,6 +158,8 @@ class ModelManager:
 
         y_pred = model.predict(X_test_scaled)
         metrics = self._calculate_metrics(y_test, y_pred)
+        
+        self._visualize_metrics(metrics, y_test, y_pred)
 
         logger.info(f"Model training completed with metrics: {metrics}")
         self.save_model(model, feature_names, metrics)
@@ -340,3 +344,75 @@ class ModelManager:
 
         logger.info(f"Generated {len(merged_predictions)} merged predictions")
         return merged_predictions
+
+    def _visualize_metrics(self, metrics: Dict[str, float], y_true: np.ndarray,
+                          y_pred: np.ndarray) -> None:
+        """
+        Создает и сохраняет визуализации метрик модели.
+
+        Args:
+            metrics (Dict[str, float]): Словарь с метриками качества
+            y_true (np.ndarray): Истинные метки классов
+            y_pred (np.ndarray): Предсказанные метки классов
+        """
+        plt.style.use('seaborn-v0_8')
+        
+        plots_dir = self.model_dir / 'plots'
+        plots_dir.mkdir(exist_ok=True)
+
+        class_names = self.label_encoder.classes_
+        
+        # Матрица ошибок
+        plt.figure(figsize=(10, 8))
+        cm = confusion_matrix(y_true, y_pred)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=class_names,
+                   yticklabels=class_names)
+        plt.title('Матрица ошибок')
+        plt.xlabel('Предсказанные метки')
+        plt.ylabel('Истинные метки')
+        plt.tight_layout()
+        plt.savefig(plots_dir / 'confusion_matrix.png')
+        plt.close()
+        
+        # График точности по классам
+        class_metrics = {k: v for k, v in metrics.items() 
+                        if k.endswith('_precision') and not k.startswith(('macro', 'weighted'))}
+        plt.figure(figsize=(12, 6))
+        class_names_metrics = [class_names[int(k.split('_')[0])] 
+                             for k in class_metrics.keys()]
+        plt.bar(class_names_metrics, list(class_metrics.values()))
+        plt.title('Точность по классам')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(plots_dir / 'class_precision.png')
+        plt.close()
+        
+        # График F1-score по классам
+        class_f1 = {k: v for k, v in metrics.items() 
+                   if k.endswith('_f1-score') and not k.startswith(('macro', 'weighted'))}
+        plt.figure(figsize=(12, 6))
+        class_names_f1 = [class_names[int(k.split('_')[0])] 
+                         for k in class_f1.keys()]
+        plt.bar(class_names_f1, list(class_f1.values()))
+        plt.title('F1-score по классам')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(plots_dir / 'class_f1_score.png')
+        plt.close()
+        
+        # Общие метрики
+        plt.figure(figsize=(10, 6))
+        general_metrics = {
+            'accuracy': metrics['accuracy'],
+            'macro avg precision': metrics.get('macro avg_precision', 0),
+            'macro avg f1-score': metrics.get('macro avg_f1-score', 0)
+        }
+        plt.bar(general_metrics.keys(), general_metrics.values())
+        plt.title('Общие метрики')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(plots_dir / 'general_metrics.png')
+        plt.close()
+        
+        logger.info("Метрики визуализированы и сохранены в директорию plots")
