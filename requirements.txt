@@ -16,3 +16,4 @@ joblib
 PyWavelets
 seaborn
 matplotlib
+optuna

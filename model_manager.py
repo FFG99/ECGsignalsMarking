@@ -7,6 +7,7 @@ import json
 from typing import Dict, List, Tuple
 from pathlib import Path
 import pickle
+import optuna
 
 class ModelManager:
     def __init__(self):
@@ -32,22 +33,49 @@ class ModelManager:
     def train_model(self, X: np.ndarray, y: np.ndarray, feature_names: List[str]) -> Tuple[CatBoostClassifier, Dict[str, float]]:
         X_train_scaled, X_test_scaled, y_train, y_test = self.prepare_data(X, y)
         
-        model_params = {
-            'iterations': 1000,
-            'learning_rate': 0.1,
-            'depth': 4,
-            'l2_leaf_reg': 3,
+        def objective(trial):
+            params = {
+                'iterations': trial.suggest_int('iterations', 500, 2000),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+                'depth': trial.suggest_int('depth', 3, 8),
+                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+                'bootstrap_type': 'Bernoulli',
+                'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+                'random_seed': 42,
+                'verbose': 100,
+                'early_stopping_rounds': 50,
+                'eval_metric': 'MultiClass',
+                'loss_function': 'MultiClass',
+                'classes_count': len(np.unique(y))
+            }
+            
+            model = CatBoostClassifier(**params)
+            eval_set = [(X_test_scaled, y_test)]
+            
+            model.fit(
+                X_train_scaled, y_train,
+                eval_set=eval_set,
+                use_best_model=True
+            )
+            
+            y_pred = model.predict(X_test_scaled)
+            return accuracy_score(y_test, y_pred)
+        
+        study = optuna.create_study(direction='maximize')
+        study.optimize(objective, n_trials=50)
+        
+        best_params = study.best_params
+        best_params.update({
             'bootstrap_type': 'Bernoulli',
-            'subsample': 0.8,
             'random_seed': 42,
             'verbose': 100,
             'early_stopping_rounds': 50,
             'eval_metric': 'MultiClass',
             'loss_function': 'MultiClass',
             'classes_count': len(np.unique(y))
-        }
+        })
         
-        model = CatBoostClassifier(**model_params)
+        model = CatBoostClassifier(**best_params)
         eval_set = [(X_test_scaled, y_test)]
         
         model.fit(
